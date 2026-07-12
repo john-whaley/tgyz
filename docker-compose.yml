@@ -1,0 +1,9 @@
+services:
+  tgyz-bot:
+    build: .
+    container_name: tgyz-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./viwers:/app/viwers:ro
