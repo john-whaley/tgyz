@@ -11,6 +11,24 @@ LOGGER = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4"}
 ALPHABET = string.ascii_letters + string.digits
+IMAGE_OPTION_SETS = [
+    [113, 54, 0, 47, 88, 150, 46, 38, 34, 120],
+    [3, 166, 73, 56, 163, 61, 146, 93, 123, 190],
+    [150, 85, 95, 72, 148, 7, 9, 34, 81, 163],
+    [23, 156, 167, 25, 125, 53, 183, 144, 2, 91],
+    [99, 18, 121, 115, 17, 19, 147, 165, 151, 118],
+    [48, 1, 115, 199, 125, 82, 191, 193, 3, 64],
+    [198, 136, 72, 177, 76, 40, 94, 125, 2, 111],
+    [96, 150, 73, 48, 61, 80, 68, 4, 27, 113],
+    [184, 62, 161, 169, 98, 69, 24, 8, 3, 66],
+    [142, 126, 36, 195, 123, 58, 31, 84, 82, 166],
+    [8, 116, 164, 94, 16, 35, 184, 117, 71, 6],
+    [2, 154, 128, 108, 179, 1, 160, 53, 32, 11],
+    [7, 105, 10, 22, 157, 45, 31, 113, 177, 134],
+    [79, 72, 48, 107, 102, 15, 134, 122, 178, 130],
+    [5, 138, 144, 161, 59, 143, 38, 158, 92, 125],
+]
+
 
 
 @dataclass(frozen=True)
@@ -18,11 +36,23 @@ class ChallengeAsset:
     path: Path
     kind: Literal["image", "video"]
     answer: str
+    option_set: tuple[str, ...] | None = None
 
 
-def image_answer(path: Path) -> str | None:
-    match = re.match(r"^(\d+)", path.stem)
-    return match.group(1) if match else None
+def image_details(path: Path) -> tuple[str, tuple[str, ...]] | None:
+    match = re.match(r"^(\d+)、(.+)$", path.stem)
+    if not match:
+        return None
+    index = int(match.group(1))
+    answer = match.group(2)
+    if index < 1 or index > len(IMAGE_OPTION_SETS):
+        LOGGER.warning("Skipping image with option index out of range: %s", path)
+        return None
+    options = tuple(str(option) for option in IMAGE_OPTION_SETS[index - 1])
+    if answer not in options:
+        LOGGER.warning("Image answer %s is not in option set %d: %s", answer, index, path)
+        options = options[:9] + (answer,)
+    return answer, options
 
 
 def load_assets(viewers_dir: Path, media_mode: str = "mixed") -> list[ChallengeAsset]:
@@ -33,11 +63,19 @@ def load_assets(viewers_dir: Path, media_mode: str = "mixed") -> list[ChallengeA
     if img_dir.exists():
         for path in sorted(img_dir.iterdir()):
             if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-                answer = image_answer(path)
-                if answer is not None:
-                    assets.append(ChallengeAsset(path=path, kind="image", answer=answer))
-                else:
-                    LOGGER.warning("Skipping image with no numeric answer prefix: %s", path)
+                    details = image_details(path)
+                    if details is not None:
+                        answer, option_set = details
+                        assets.append(
+                            ChallengeAsset(
+                                path=path,
+                                kind="image",
+                                answer=answer,
+                                option_set=option_set,
+                            )
+                        )
+                    else:
+                        LOGGER.warning("Skipping image with invalid name format: %s", path)
 
     if videos_dir.exists():
         for path in sorted(videos_dir.iterdir()):
@@ -61,9 +99,11 @@ def load_assets(viewers_dir: Path, media_mode: str = "mixed") -> list[ChallengeA
 def build_options(asset: ChallengeAsset, assets: list[ChallengeAsset]) -> list[str]:
     correct = asset.answer
     if asset.kind == "image":
-        wrongs = {item.answer for item in assets if item.kind == "image" and item.answer != correct}
-        while len(wrongs) < 9:
-            wrongs.add(str(random.randint(0, 99)))
+        if asset.option_set is None:
+            raise ValueError(f"Image asset has no option set: {asset.path}")
+        options = list(asset.option_set)
+        random.shuffle(options)
+        return options
     else:
         wrongs = {item.answer for item in assets if item.kind == "video" and item.answer != correct}
         while len(wrongs) < 9:
