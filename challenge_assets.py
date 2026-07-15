@@ -11,6 +11,7 @@ LOGGER = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4"}
 ALPHABET = string.ascii_letters + string.digits
+
 IMAGE_OPTION_SETS = [
     [113, 54, 0, 47, 88, 150, 46, 38, 34, 120],
     [3, 166, 73, 56, 163, 61, 146, 93, 123, 190],
@@ -27,9 +28,8 @@ IMAGE_OPTION_SETS = [
     [7, 105, 10, 22, 157, 45, 31, 113, 177, 134],
     [79, 72, 48, 107, 102, 15, 134, 122, 178, 130],
     [5, 138, 144, 161, 59, 143, 38, 158, 92, 125],
-    [18, 186, 65, 57, 31, 179, 1, 99, 74, 23]
+    [18, 186, 65, 57, 31, 179, 1, 99, 74, 23],
 ]
-
 
 
 @dataclass(frozen=True)
@@ -37,23 +37,28 @@ class ChallengeAsset:
     path: Path
     kind: Literal["image", "video"]
     answer: str
+    image_index: int | None = None
     option_set: tuple[str, ...] | None = None
 
 
-def image_details(path: Path) -> tuple[str, tuple[str, ...]] | None:
-    match = re.match(r"^(\d+)、(.+)$", path.stem)
+def image_details(path: Path) -> tuple[int, str, tuple[str, ...]] | None:
+    # Accept the real Chinese enumeration comma and its mojibake form seen in
+    # older local filenames/source output.
+    match = re.match(r"^(\d+)(?:\u3001|\u040e\u045e)(.+)$", path.stem)
     if not match:
         return None
+
     index = int(match.group(1))
     answer = match.group(2)
     if index < 1 or index > len(IMAGE_OPTION_SETS):
         LOGGER.warning("Skipping image with option index out of range: %s", path)
         return None
+
     options = tuple(str(option) for option in IMAGE_OPTION_SETS[index - 1])
     if answer not in options:
         LOGGER.warning("Image answer %s is not in option set %d: %s", answer, index, path)
         options = options[:9] + (answer,)
-    return answer, options
+    return index, answer, options
 
 
 def load_assets(viewers_dir: Path, media_mode: str = "mixed") -> list[ChallengeAsset]:
@@ -64,19 +69,20 @@ def load_assets(viewers_dir: Path, media_mode: str = "mixed") -> list[ChallengeA
     if img_dir.exists():
         for path in sorted(img_dir.iterdir()):
             if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-                    details = image_details(path)
-                    if details is not None:
-                        answer, option_set = details
-                        assets.append(
-                            ChallengeAsset(
-                                path=path,
-                                kind="image",
-                                answer=answer,
-                                option_set=option_set,
-                            )
+                details = image_details(path)
+                if details is not None:
+                    image_index, answer, option_set = details
+                    assets.append(
+                        ChallengeAsset(
+                            path=path,
+                            kind="image",
+                            answer=answer,
+                            image_index=image_index,
+                            option_set=option_set,
                         )
-                    else:
-                        LOGGER.warning("Skipping image with invalid name format: %s", path)
+                    )
+                else:
+                    LOGGER.warning("Skipping image with invalid name format: %s", path)
 
     if videos_dir.exists():
         for path in sorted(videos_dir.iterdir()):
@@ -105,11 +111,11 @@ def build_options(asset: ChallengeAsset, assets: list[ChallengeAsset]) -> list[s
         options = list(asset.option_set)
         random.shuffle(options)
         return options
-    else:
-        wrongs = {item.answer for item in assets if item.kind == "video" and item.answer != correct}
-        while len(wrongs) < 9:
-            wrongs.add("".join(random.choice(ALPHABET) for _ in range(4)))
-        wrongs.discard(correct)
+
+    wrongs = {item.answer for item in assets if item.kind == "video" and item.answer != correct}
+    while len(wrongs) < 9:
+        wrongs.add("".join(random.choice(ALPHABET) for _ in range(4)))
+    wrongs.discard(correct)
 
     selected = random.sample(sorted(wrongs), 9)
     options = selected + [correct]

@@ -2,6 +2,7 @@ import asyncio
 import html
 import logging
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from telegram.ext import (
 from challenge_assets import ChallengeAsset, build_options, load_assets
 
 LOGGER = logging.getLogger(__name__)
+IMAGE_TRIGGER_PATTERN = re.compile(r"\byz(\d+)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -58,7 +60,7 @@ class ChallengeBot:
         if chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
             return
 
-        asset = secrets.choice(self.assets)
+        asset = self._asset_for_message(message.text or message.caption or "")
         token = secrets.token_urlsafe(9)
         options = build_options(asset, self.assets)
         keyboard = self._keyboard_for(token, options)
@@ -80,6 +82,16 @@ class ChallengeBot:
             token=token,
         )
         asyncio.create_task(self._expire_later(context, token))
+
+    def _asset_for_message(self, text: str) -> ChallengeAsset:
+        match = IMAGE_TRIGGER_PATTERN.search(text)
+        if match:
+            image_index = int(match.group(1))
+            for asset in self.assets:
+                if asset.kind == "image" and asset.image_index == image_index:
+                    return asset
+            LOGGER.info("No image asset found for yz%s; using random asset", image_index)
+        return secrets.choice(self.assets)
 
     @staticmethod
     async def _send_challenge_media(
